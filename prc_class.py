@@ -1,14 +1,15 @@
-## Util functions 
-
+# import modules
 import time
-
 import jax
 import sys
+import os
 import yaml
 import matplotlib.pyplot as plt
+from chainconsumer import ChainConsumer , PlotConfig , Chain , Truth
 import numpy as np
+import pandas as pd
 import torch
-import tabulate
+from tabulate import tabulate
 from sbi import utils
 from sbi.inference import SNPE
 from sbi.utils import RestrictionEstimator , RestrictedPrior , get_density_thresholder
@@ -16,12 +17,16 @@ from jaxspec.data import ObsConfiguration
 from jaxspec.data.util import fakeit_for_multiple_parameters
 from jaxspec.model.abc import SpectralModel
 
+from prc_utils import summary_statistics_func, print_message
 
 
+# class for performing sbi
 class sbi_run():
+    
+    # ===============================================================================================================
+    # initialise the class
 
     def __init__(self, yml_file):
-        print('initialising')
         
         # open config yaml file
         self.yml_file = yml_file
@@ -34,6 +39,7 @@ class sbi_run():
         # Create a frame around the table and print it
         print(tabulate(table_data , headers = ["Variable" , "Value"] , tablefmt = "fancy_grid"))
 
+        # read parameters
         self.path_pha =  self.config['path_pha']
         self.reference_pha =  self.config['reference_pha']
         self.energy_min =  self.config['energy_range'][0]
@@ -81,6 +87,15 @@ class sbi_run():
         self.use_summary=self.config.get("use_summary_statistics", False)
 
 
+    # ===============================================================================================================
+    def read_data(self):
+        print("Read the PHA file")
+        self.pha_filename = self.path_pha + self.reference_pha
+        print(self.pha_filename , self.energy_min , self.energy_max)
+
+    
+    
+    
     def read_data_and_init_global_prior( self ):
         print("Read the PHA and initialize the global prior")
         self.pha_filename = self.path_pha + self.reference_pha
@@ -163,9 +178,33 @@ class sbi_run():
         low_v = torch.as_tensor(self.free_parameter_lower_bounds_transformed)
         high_v = torch.as_tensor(self.free_parameter_upper_bounds_transformed)
 
+        # initialise uniform prior from parameters
         self.prior = utils.BoxUniform(low = low_v , high = high_v)
+        
 
-    #===============================================================================================================
+    # ===============================================================================================================
+
+    def plot_prior(self):
+        theta_from_global_prior = self.prior.sample((10 * self.number_of_posterior_samples,))
+        df_theta_from_global_prior = pd.DataFrame(theta_from_global_prior,
+                                                columns=self.free_parameter_names_for_plots_transformed)
+
+        c = ChainConsumer()
+        c.set_plot_config(PlotConfig(usetex=True, serif=True, label_font_size=18, tick_font_size=14))
+        c.add_chain(Chain(samples=df_theta_from_global_prior,
+                        name="Global initial prior",
+                        color="blue", bar_shade=True))
+
+        fig = c.plotter.plot(figsize=(8, 10))
+        fig.align_ylabels()
+        fig.align_xlabels()
+
+        png_filename = self.path_outputs + self.root_output_files + "prior.png"
+        fig.savefig(png_filename, dpi=150, bbox_inches="tight")
+        plt.close()
+
+
+    # ===============================================================================================================
 
     def compute_x_sim( jaxspec_model_expression , parameter_states , thetas , pha_file , energy_min , energy_max ,
                     free_parameter_prior_types , parameter_lower_bounds , apply_stat = True , verbose = False ) :

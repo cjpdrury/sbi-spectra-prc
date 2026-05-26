@@ -7,6 +7,7 @@ wheels/
 *.egg-info
 SIXSA_REFERENCE_SPECTRA/
 SISXA_YML_INPUT_FILES/
+OUTPUTS/
 
 # Virtual environments
 .venv
