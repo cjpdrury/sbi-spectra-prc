@@ -1,0 +1,13 @@
+[project]
+name = "sbi-spectra-prc"
+version = "0.1.0"
+description = "Paper reproducibility challenge: doi.org/10.1051/0004-6361/202449214"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "jax>=0.6.2",
+    "jaxspec>=0.3.4",
+    "matplotlib>=3.10.9",
+    "sbi>=0.26.1",
+    "torch>=2.12.0",
+]
