@@ -8,6 +8,8 @@ dependencies = [
     "jax>=0.6.2",
     "jaxspec>=0.3.4",
     "matplotlib>=3.10.9",
+    "pyyaml>=6.0.3",
     "sbi>=0.26.1",
+    "tabulate>=0.10.0",
     "torch>=2.12.0",
 ]

@@ -1958,7 +1958,9 @@ dependencies = [
     { name = "jax" },
     { name = "jaxspec" },
     { name = "matplotlib" },
+    { name = "pyyaml" },
     { name = "sbi" },
+    { name = "tabulate" },
     { name = "torch" },
 ]
 
@@ -1967,7 +1969,9 @@ requires-dist = [
     { name = "jax", specifier = ">=0.6.2" },
     { name = "jaxspec", specifier = ">=0.3.4" },
     { name = "matplotlib", specifier = ">=3.10.9" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "sbi", specifier = ">=0.26.1" },
+    { name = "tabulate", specifier = ">=0.10.0" },
     { name = "torch", specifier = ">=2.12.0" },
 ]
 
