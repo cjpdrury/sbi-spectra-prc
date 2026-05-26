@@ -17,7 +17,7 @@ from jaxspec.data import ObsConfiguration
 from jaxspec.data.util import fakeit_for_multiple_parameters
 from jaxspec.model.abc import SpectralModel
 
-from prc_utils import summary_statistics_func, print_message
+from prc_utils import summary_statistics_func, print_message, compute_x_sim
 
 
 # class for performing sbi
@@ -204,80 +204,24 @@ class sbi_run():
         plt.close()
 
 
+
     # ===============================================================================================================
-
-    def compute_x_sim( jaxspec_model_expression , parameter_states , thetas , pha_file , energy_min , energy_max ,
-                    free_parameter_prior_types , parameter_lower_bounds , apply_stat = True , verbose = False ) :
-        """
-        # compute_x_sim: compute the simulated spectra with jaxspec fakeit like command.
-        # It is therefore dependent on jaxspec, which currently has a limited number of models implemented.
-        # It is possible to generate simulated spectra with other software, such as XSPEC, as long as the output format
-        # remains similar. The output format is an array of spectra in counts. jaxspec is really powerful in terms of speed.
-        # More models will be implemented as time goes (see the jaxspec documentation for the synthax of the models).
-
-        Args:
-            jaxspec_model_expression (_type_): _description_
-            parameter_states (_type_): _description_
-            thetas (_type_): _description_
-            pha_file (_type_): _description_
-            energy_min (_type_): _description_
-            energy_max (_type_): _description_
-            free_parameter_prior_types (_type_): _description_
-            parameter_lower_bounds (_type_): _description_
-            apply_stat (bool, optional): _description_. Defaults to True.
-            verbose (bool, optional): _description_. Defaults to False.
-
-        Returns:
-            _type_: _description_
-        """
-
-        #
-        # Apply the transformation if needed
-        #
-        thetas = torch.as_tensor(np.where(np.array(free_parameter_prior_types) == "loguniform" , 10. ** thetas , thetas))
-
-        jaxspec_model = SpectralModel.from_string(jaxspec_model_expression)
-
-        parameter_values = []
-        index_theta = 0
-
-        for i_param , param_state in enumerate(parameter_states) :
-            if param_state == "free" :
-                parameter_values.append([thetas[j][index_theta] for j in range(len(thetas))])
-                index_theta += 1
-                if verbose :
-                    print(f"{param_state.lower( )} Parameter #{i_param + 1} of {jaxspec_model.n_parameters} ")
-
-            elif param_state == "frozen" :
-                parameter_values.append([parameter_lower_bounds[i_param] for j in range(len(thetas))])
-                if verbose :
-                    print(f"{param_state.lower( )} Parameter #{i_param + 1} of {jaxspec_model.n_parameters} ")
-
-        params_to_set = jaxspec_model.params
-        i_para = 0
-
-        for l , param_set in params_to_set.items( ) :
-            for param_name , _ in param_set.items( ) :
-                upd_dict = {param_name : np.array(parameter_values[i_para])}
-                param_set.update(upd_dict)
-                i_para += 1
-
-        folding_model = ObsConfiguration.from_pha_file(pha_file , energy_min , energy_max)
-
-        if len(thetas) > 1 :
-            print("Multiple thetas simulated -> parallelization with JAX required")
-            start_time = time.perf_counter( )
-            x = jax.jit(lambda s : fakeit_for_multiple_parameters(folding_model , jaxspec_model , s ,
-                                                                apply_stat = apply_stat))(params_to_set)
-
-            end_time = time.perf_counter( )
-            duration_time = end_time - start_time
-            print(f"It took just {duration_time:.1f} seconds for jax.jit to generate {len(thetas)} simulations")
-        #    return torch.as_tensor(np.array(x).astype(np.float32))
-        else :
-            print("One single theta simulated -> parallelization with JAX not required")
-            x = fakeit_for_multiple_parameters(folding_model , jaxspec_model , params_to_set , apply_stat = apply_stat)
-        return torch.as_tensor(np.array(x).astype(np.float32))
+    def sample_from_prior(self):
+        
+        # generate sample pairs from training
+        self.theta_train = self.prior.sample((self.number_of_simulations_for_train_set,))
+        self.x_train = compute_x_sim(self.jaxspec_model_expression , self.parameter_states , self.theta_train ,
+                                self.pha_filename ,
+                                self.energy_min , self.energy_max ,
+                                self.free_parameter_prior_types , self.parameter_lower_bounds , apply_stat = True ,
+                                verbose = False)
+        
+        # generate sample pairs from testing
+        self.theta_test = self.restricted_prior.sample((self.number_of_simulations_for_test_set ,))
+        self.x_test = compute_x_sim(self.jaxspec_model_expression , self.parameter_states, 
+                                    self.theta_test , self.pha_filename , self.energy_min , self.energy_max ,
+                                    self.free_parameter_prior_types , self.parameter_lower_bounds , apply_stat = True ,
+                                verbose = False)
 
 
 # ====================================================================================================================

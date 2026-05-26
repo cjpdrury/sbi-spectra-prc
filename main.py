@@ -14,7 +14,8 @@ def main():
     # plot prior
     # sbi_demo.plot_prior()
     
-    # 
+    # sample from prior
+    sbi_demo.sample_from_prior()
 
 
 
