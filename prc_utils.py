@@ -10,12 +10,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import statsmodels.api as sm
 import torch
+from sklearn.linear_model import LinearRegression
+
 from jaxspec.data import ObsConfiguration
 from jaxspec.data.util import fakeit_for_multiple_parameters
 from jaxspec.model.abc import SpectralModel
-from sklearn.linear_model import LinearRegression
-from jaxspec.model.additive import Powerlaw, Blackbodyrad, Blackbody
-from jaxspec.model.multiplicative import Tbabs, Phabs
+# from jaxspec.model.additive import Powerlaw, Blackbodyrad, Blackbody
+# from jaxspec.model.multiplicative import Tbabs, Phabs
 from tabulate import tabulate
 
 
@@ -165,8 +166,9 @@ def compute_x_sim( jaxspec_model_expression , parameter_states , thetas , pha_fi
     #
     thetas = torch.as_tensor(np.where(np.array(free_parameter_prior_types) == "loguniform" , 10. ** thetas , thetas))
 
-    # jaxspec_model = SpectralModel.from_string(jaxspec_model_expression)
-    jaxspec_model = eval(jaxspec_model_expression)
+    jaxspec_model = SpectralModel.from_string(jaxspec_model_expression)
+
+    # jaxspec_model = eval(jaxspec_model_expression)
 
     parameter_values = []
     index_theta = 0

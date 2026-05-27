@@ -12,7 +12,7 @@ import torch
 from tabulate import tabulate
 from sbi import utils
 from sbi.inference import SNPE
-from sbi.utils import RestrictionEstimator , RestrictedPrior , get_density_thresholder
+# from sbi.utils import RestrictionEstimator , RestrictedPrior , get_density_thresholder
 from jaxspec.data import ObsConfiguration
 from jaxspec.data.util import fakeit_for_multiple_parameters
 from jaxspec.model.abc import SpectralModel
