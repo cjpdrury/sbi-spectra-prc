@@ -4,7 +4,8 @@ import jax
 import sys
 import os
 import yaml
-import matplotlib.pyplot as plt
+import matplotlib
+from matplotlib import pyplot as plt
 from chainconsumer import ChainConsumer , PlotConfig , Chain , Truth
 import numpy as np
 import pandas as pd
@@ -87,15 +88,7 @@ class sbi_run():
         self.use_summary=self.config.get("use_summary_statistics", False)
 
 
-    # ===============================================================================================================
-    def read_data(self):
-        print("Read the PHA file")
-        self.pha_filename = self.path_pha + self.reference_pha
-        print(self.pha_filename , self.energy_min , self.energy_max)
-
-    
-    
-    
+    # ===============================================================================================================    
     def read_data_and_init_global_prior( self ):
         print("Read the PHA and initialize the global prior")
         self.pha_filename = self.path_pha + self.reference_pha
@@ -206,7 +199,7 @@ class sbi_run():
 
 
     # ===============================================================================================================
-    def sample_from_prior(self):
+    def generate_train_and_test_data(self):
         
         # generate sample pairs from training
         self.theta_train = self.prior.sample((self.number_of_simulations_for_train_set,))
@@ -217,11 +210,41 @@ class sbi_run():
                                 verbose = False)
         
         # generate sample pairs from testing
-        self.theta_test = self.restricted_prior.sample((self.number_of_simulations_for_test_set ,))
+        self.theta_test = self.prior.sample((self.number_of_simulations_for_test_set ,))
         self.x_test = compute_x_sim(self.jaxspec_model_expression , self.parameter_states, 
                                     self.theta_test , self.pha_filename , self.energy_min , self.energy_max ,
                                     self.free_parameter_prior_types , self.parameter_lower_bounds , apply_stat = True ,
                                 verbose = False)
+        
+    # ===============================================================================================================   
+    def plot_prior_predictive_check(self):
+        png_filename = self.path_outputs + self.root_output_files + "prior_predictive_check.png"
+        
+        fig, ax = plt.subplots(1, 1)
+        plt.step(0.5 * (self.e_min_folded + self.e_max_folded), self.x_obs_reference, where="mid", color="red", linewidth=2., label=f"Observed spectrum ({np.int32(np.sum(self.x_obs_reference)):d} counts)")
+
+        plt.fill_between(0.5 * (self.e_min_folded + self.e_max_folded),
+            *np.percentile(self.x_train, [0., 100], axis=0),
+            color="grey",
+            alpha=0.2,
+            step="mid",
+            label=r"Prior coverage")
+
+        self.logscale_values_low = np.logspace(np.log10(np.min(self.e_min_folded)), np.log10(1.), num=5, endpoint=False)
+        self.logscale_values_high = np.logspace(np.log10(1.), np.log10(np.max(self.e_max_folded)), num=6, endpoint=True)
+        self.logscale_values = np.concatenate((self.logscale_values_low, self.logscale_values_high))
+        self.logscale_values_rounded = [round(val, 1) if val < 1 else int(val) for val in self.logscale_values]
+
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.set_xticks(self.logscale_values_rounded)
+        ax.get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
+
+        plt.xlabel("Energy (keV)")
+        plt.ylabel("Counts")
+        plt.legend(frameon=False)
+        plt.savefig(png_filename, dpi=150, bbox_inches="tight")
+        plt.close()
 
 
 # ====================================================================================================================

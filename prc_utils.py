@@ -15,8 +15,8 @@ from sklearn.linear_model import LinearRegression
 from jaxspec.data import ObsConfiguration
 from jaxspec.data.util import fakeit_for_multiple_parameters
 from jaxspec.model.abc import SpectralModel
-# from jaxspec.model.additive import Powerlaw, Blackbodyrad, Blackbody
-# from jaxspec.model.multiplicative import Tbabs, Phabs
+from jaxspec.model.additive import Powerlaw, Blackbodyrad, Blackbody
+from jaxspec.model.multiplicative import Tbabs, Phabs
 from tabulate import tabulate
 
 
@@ -185,6 +185,7 @@ def compute_x_sim( jaxspec_model_expression , parameter_states , thetas , pha_fi
             if verbose :
                 print(f"{param_state.lower( )} Parameter #{i_param + 1} of {jaxspec_model.n_parameters} ")
 
+    print(jaxspec_model)
     params_to_set = jaxspec_model.params
     i_para = 0
 
@@ -193,6 +194,7 @@ def compute_x_sim( jaxspec_model_expression , parameter_states , thetas , pha_fi
             upd_dict = {param_name : np.array(parameter_values[i_para])}
             param_set.update(upd_dict)
             i_para += 1
+
 
     folding_model = ObsConfiguration.from_pha_file(pha_file , energy_min , energy_max)
 

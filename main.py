@@ -5,6 +5,7 @@ def main():
     
     # initial params
     yml_file = "SISXA_YML_INPUT_FILES/" + "1_sri_config_cmin_cmax_restrictor_spectrum_20000.yml"
+    make_plot = True
     
 
     # setup inference
@@ -12,10 +13,11 @@ def main():
     sbi_demo.read_data_and_init_global_prior()
 
     # plot prior
-    # sbi_demo.plot_prior()
+    sbi_demo.plot_prior()
     
     # sample from prior
-    sbi_demo.sample_from_prior()
+    sbi_demo.generate_train_and_test_data()
+    sbi_demo.plot_prior_predictive_check()
 
 
 
