@@ -13,12 +13,14 @@ import torch
 from tabulate import tabulate
 from sbi import utils
 from sbi.inference import SNPE
+from sbi.analysis import pairplot
+
 # from sbi.utils import RestrictionEstimator , RestrictedPrior , get_density_thresholder
 from jaxspec.data import ObsConfiguration
 from jaxspec.data.util import fakeit_for_multiple_parameters
 from jaxspec.model.abc import SpectralModel
 
-from prc_utils import summary_statistics_func, print_message, compute_x_sim
+from prc_utils import summary_statistics_func, print_message, print_best_fit_parameters, compute_x_sim, compute_cstat
 
 
 # class for performing sbi
@@ -203,6 +205,8 @@ class sbi_run():
         
         # generate sample pairs from training
         self.theta_train = self.prior.sample((self.number_of_simulations_for_train_set,))
+        print(f"Generating the simulations that will be used for the inference")
+        start_time = time.perf_counter( )
         self.x_train = compute_x_sim(self.jaxspec_model_expression , self.parameter_states , self.theta_train ,
                                 self.pha_filename ,
                                 self.energy_min , self.energy_max ,
@@ -215,6 +219,9 @@ class sbi_run():
                                     self.theta_test , self.pha_filename , self.energy_min , self.energy_max ,
                                     self.free_parameter_prior_types , self.parameter_lower_bounds , apply_stat = True ,
                                 verbose = False)
+        end_time = time.perf_counter( )
+        print(f'It took {end_time - start_time: 0.2f} second(s) to complete the simulations to be used for the inference ')
+        self.duration_generation_theta_x = end_time - start_time
         
     # ===============================================================================================================   
     def plot_prior_predictive_check(self):
@@ -245,6 +252,153 @@ class sbi_run():
         plt.legend(frameon=False)
         plt.savefig(png_filename, dpi=150, bbox_inches="tight")
         plt.close()
+
+
+
+    #===================================================================================================================
+    def run_sri(self):
+
+        # initialise NPE trainer object
+        self.inference = SNPE(self.prior)
+        self.posterior_net = self.inference.append_simulations(self.theta_train, self.x_train)
+
+        # train the density estimator NN
+        self.density_estimator = self.inference.train()
+
+        # construct DirectPosterior object
+        self.posterior = self.inference.build_posterior()
+
+        # run the observed spectra through the density estimator and sample from the cond'd distribution
+        self.posterior_theta = self.posterior.sample((self.number_of_posterior_samples,),
+                                                    x=self.x_obs_reference)
+
+        print(np.shape(self.posterior_theta))
+
+        # get median theta and percentiles
+        self.best_fit_parameters = np.median(self.posterior_theta, axis=0)
+        # self.mean_theta = np.mean(self.posterior_theta, axis=0)
+        self.best_fit_parameters_lower_bounds, self.best_fit_parameters_upper_bounds = np.percentile(self.posterior_theta,
+                                                                                        (16, 84), axis=0)
+
+        # compute the median spectra
+        self.x_from_median = compute_x_sim(self.jaxspec_model_expression, self.parameter_states,
+                                        torch.tensor([self.best_fit_parameters]),
+                                        self.pha_filename, self.energy_min, self.energy_max,
+                                        self.free_parameter_prior_types, self.parameter_lower_bounds,
+                                        apply_stat=False, verbose=True)
+
+        
+        # Now computing the cstat of the best fit and its deviation against the expected value
+        # From Kaastra(2017) https://ui.adsabs.harvard.edu/abs/2017A%26A...605A..51K/abstract
+        #
+        self.cstat_median_posterior_sample , self.cstat_dev_median_posterior_sample = compute_cstat(self.x_obs_reference , np.array(self.x_from_median), verbose = True)
+
+        print_best_fit_parameters(self.x_obs_reference, self.free_parameter_names_for_plots , self.free_parameter_prior_types ,self.best_fit_parameters , self.best_fit_parameters_lower_bounds ,self.best_fit_parameters_upper_bounds ,self.cstat_median_posterior_sample , self.cstat_dev_median_posterior_sample)
+
+
+        # compute spectra x for posterior samples
+        self.x_from_posterior_sample = compute_x_sim(self.jaxspec_model_expression,
+                                                    self.parameter_states, self.posterior_theta,
+                                                    self.pha_filename, self.energy_min, self.energy_max,
+                                                    self.free_parameter_prior_types, self.parameter_lower_bounds,
+                                                    apply_stat=True, verbose=True)
+
+        # create the dataframe for chain consumer
+        self.df4cc = pd.DataFrame(self.posterior_theta, columns=self.free_parameter_names_for_plots_transformed)
+
+    
+    # ==============================================================================================================
+    def plot_sri_posteriors(self):
+
+        if self.type_of_inference == "single round inference":
+            plot_title = f"SRI ({self.number_of_simulations_for_train_set:d} simulations)"
+        elif self.type_of_inference == "multiple round inference":
+            plot_title = f"MRI ({self.number_of_simulations_for_train_set:d} x {self.number_of_rounds_for_multiple_inference:d} simulations)"
+
+        c = ChainConsumer()
+        c.set_plot_config(PlotConfig(usetex=True, serif=True, label_font_size=18, tick_font_size=14))
+        c.add_chain(Chain(samples=self.df4cc, name=plot_title, color="blue", bar_shade=True))
+
+        truth_sri = dict(zip(self.df4cc.columns.values.tolist(), np.array(self.df4cc.median())))
+        c.add_truth(Truth(location=truth_sri, color="blue"))
+
+        fig = c.plotter.plot(figsize=(8, 10))
+        fig.align_ylabels()
+        fig.align_xlabels()
+
+        png_filename = self.path_outputs + self.root_output_files + "posteriors_at_reference_spectrum.png"
+        fig.savefig(png_filename, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+
+    #===================================================================================================================
+    def plot_sri_spectrum(self):
+
+        if self.type_of_inference == "single round inference":
+            plot_title = f"SRI ({self.number_of_simulations_for_train_set:d} simulations)"
+        elif self.type_of_inference == "multiple round inference":
+            plot_title = f"MRI ({self.number_of_simulations_for_train_set:d} x {self.number_of_rounds_for_multiple_inference:d} simulations)"
+
+        gehrels_error_counts = (1. + (0.75 + np.array(self.x_obs_reference)) ** 0.5)
+        best_fit_residuals = (np.array(self.x_obs_reference) - np.array(self.x_from_median)) / np.array(gehrels_error_counts)
+
+        fig, ax = plt.subplots(2, 1, figsize=(8, 10), sharex=True, height_ratios=[0.8, 0.2])
+        plt.subplots_adjust(hspace=0.0)
+
+        # Plotting the data, best fit, and coverage
+        ax[0].step(0.5 * (self.e_min_folded + self.e_max_folded), self.x_obs_reference, where="mid",
+                label=f"Observed spectrum ({np.int32(np.sum(self.x_obs_reference)):d} counts)",
+                color="black")
+        ax[0].step(0.5 * (self.e_min_folded + self.e_max_folded), self.x_from_median.flatten(), where="mid",
+                label=f"Best fit ({self.cstat_median_posterior_sample:0.1f}, {self.cstat_dev_median_posterior_sample:0.1f}$\sigma$)",
+                color="blue")
+        ax[0].fill_between(
+            0.5 * (self.e_min_folded + self.e_max_folded),
+            *np.percentile(self.x_from_posterior_sample, [16, 84], axis=0),
+            alpha=0.3,
+            color="green",
+            step="mid",
+            label=r"$1-\sigma$ coverage",
+        )
+        ax[0].set_yscale("log")
+        ax[0].set_xscale("log")
+        ax[0].set_ylabel("Counts")
+        ax[0].legend(frameon=False)
+        ax[0].set_title(plot_title)
+
+        # Plotting residuals
+        ax[1].step(0.5 * (self.e_min_folded + self.e_max_folded), best_fit_residuals.flatten(),
+                label="Residuals", color="black")
+        color = (0.15, 0.25, 0.45)
+        ax[1].axhline(0, color=color, ls="--")
+        ax[1].axhline(-3, color=color, ls=":")
+        ax[1].axhline(3, color=color, ls=":")
+
+        ax[1].set_yticks([-3, 0, 3], labels=[-3, 0, 3])
+        ax[1].set_yticks(range(-3, 4), minor=True)
+        ax[1].set_ylabel(r"Residuals ($\sigma$)")
+
+        ax[1].set_xticks(self.logscale_values_rounded, labels=self.logscale_values_rounded)
+        ax[1].get_xaxis().set_major_formatter(matplotlib.ticker.ScalarFormatter())
+        ax[1].set_xlabel("Energy (keV)")
+
+        fig.align_ylabels()
+        fig.tight_layout()
+
+        png_filename = self.path_outputs + self.root_output_files + "reference_spectrum_and_folded_model.png"
+        fig.savefig(png_filename, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+
+
+
+# ====================================================================================================================
+    def plot_posterior_at_x_obs(self):
+
+        # plot
+        fig, ax = pairplot(self.posterior_theta)
+        fig.savefig(self.path_outputs + self.root_output_files + "posterior_pairplot.png", dpi=150, bbox_inches="tight")
+        plt.close(fig)
+
+
 
 
 # ====================================================================================================================

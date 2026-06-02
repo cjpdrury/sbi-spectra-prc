@@ -24,7 +24,7 @@ from tabulate import tabulate
 def print_message(message):
     lines = message.split('\n')
     formatted_message="\n================================================================================\n"
-    formatted_message+= '\n'.join("[SIXSA] " + line for line in lines)
+    formatted_message+= '\n'.join("[LOG] " + line for line in lines)
     formatted_message+="\n================================================================================\n"
     print(formatted_message)
 
@@ -168,8 +168,6 @@ def compute_x_sim( jaxspec_model_expression , parameter_states , thetas , pha_fi
 
     jaxspec_model = SpectralModel.from_string(jaxspec_model_expression)
 
-    # jaxspec_model = eval(jaxspec_model_expression)
-
     parameter_values = []
     index_theta = 0
 
@@ -185,7 +183,6 @@ def compute_x_sim( jaxspec_model_expression , parameter_states , thetas , pha_fi
             if verbose :
                 print(f"{param_state.lower( )} Parameter #{i_param + 1} of {jaxspec_model.n_parameters} ")
 
-    print(jaxspec_model)
     params_to_set = jaxspec_model.params
     i_para = 0
 
@@ -200,7 +197,7 @@ def compute_x_sim( jaxspec_model_expression , parameter_states , thetas , pha_fi
 
     if len(thetas) > 1 :
         print("Multiple thetas simulated -> parallelization with JAX required")
-        start_time = time.perf_counter( )
+        start_time = time.perf_counter( ) 
         x = jax.jit(lambda s : fakeit_for_multiple_parameters(folding_model , jaxspec_model , s ,
                                                             apply_stat = apply_stat))(params_to_set)
 
@@ -212,3 +209,114 @@ def compute_x_sim( jaxspec_model_expression , parameter_states , thetas , pha_fi
         print("One single theta simulated -> parallelization with JAX not required")
         x = fakeit_for_multiple_parameters(folding_model , jaxspec_model , params_to_set , apply_stat = apply_stat)
     return torch.as_tensor(np.array(x).astype(np.float32))
+
+
+# ===============================================================================================================
+# This function computes the cstat, its expected value and variance.
+
+def compute_cstat( data_in: object , model_in: object , with_cstat_dev=True, verbose: object = True ) -> object :
+    from scipy.stats import norm
+    import numpy
+
+    #
+    # From Kaastra(2017) https://ui.adsabs.harvard.edu/abs/2017A%26A...605A..51K/abstract
+    #
+
+    def compute_ce_cv_from_kaastra_2017( mu ) :
+
+        def f0( mu , k ) :
+            import numpy as np
+            import math
+            #        print("before rounding,",mu,k)
+            k = np.int32(k)
+            pk_mu = (np.exp(-mu) * (mu ** k)) / math.factorial(k)
+            if k > 0 :
+                pk_mu = pk_mu * (mu - k + k * np.log(k / mu)) ** 2.
+            if k == 0 :
+                pk_mu = pk_mu * (mu) ** 2.
+
+            return pk_mu
+
+        import sys
+        import numpy as np
+        ce = 0.;
+        cv = 0.
+
+        if mu <= 0.5 : ce = -0.25 * mu ** 3. + 1.38 * mu ** 2. - 2. * mu * np.log(mu)
+        if mu > 0.5 and mu <= 2. : ce = -0.00335 * mu ** 5 + 0.04259 * mu ** 4. - 0.27331 * mu ** 3. + 1.381 * mu ** 2. - 2. * mu * np.log(
+            mu)
+        if mu > 2 and mu <= 5. : ce = 1.019275 + 0.1345 * mu ** (0.461 - 0.9 * np.log(mu))
+        if mu > 5 and mu <= 10. : ce = 1.00624 + 0.604 / mu ** 1.68
+        if mu > 10 : ce = 1. + 0.1649 / mu + 0.226 / mu ** 2.
+
+        if mu >= 0 and mu <= 0.1 : cv = 4. * (
+                f0(mu , 0.) + f0(mu , 1.) + f0(mu , 2.) + f0(mu , 3.) + f0(mu , 4.)) - ce ** 2.
+        if mu > 0.1 and mu <= 0.2 : cv = -262. * mu ** 4. + 195. * mu ** 3. - 51.24 * mu ** 2. + 4.34 * mu + 0.77005
+        if mu > 0.2 and mu <= 0.3 : cv = 4.23 * mu ** 2. - 2.8254 * mu + 1.12522
+        if mu > 0.3 and mu <= 0.5 : cv = -3.7 * mu ** 3. + 7.328 * mu ** 2 - 3.6926 * mu + 1.20641
+        if mu > 0.5 and mu <= 1. : cv = 1.28 * mu ** 4. - 5.191 * mu ** 3 + 7.666 * mu ** 2. - 3.5446 * mu + 1.15431
+        if mu > 1 and mu <= 2. : cv = 0.1125 * mu ** 4. - 0.641 * mu ** 3 + 0.859 * mu ** 2. + 1.0914 * mu - 0.05748
+        if mu > 2 and mu <= 3. : cv = 0.089 * mu ** 3. - 0.872 * mu ** 2. + 2.8422 * mu - 0.67539
+        if mu > 3 and mu <= 5. : cv = 2.12336 + 0.012202 * mu ** (5.717 - 2.6 * np.log(mu))
+        if mu > 5 and mu <= 10. : cv = 2.05159 + 0.331 * mu ** (1.343 - np.log(mu))
+        if mu > 10 : cv = 12. / mu ** 3. + 0.79 / mu ** 2. + 0.6747 / mu + 2.
+
+        if ce == 0. or cv == 0. : sys.exit(
+            "value of " + str(mu) + " not supported, please go back to Kaastra (2017)")
+        #    print mu,ce,cv
+
+        return ce , cv
+
+    data = data_in.astype(numpy.float32)
+    model = np.array(model_in).flatten( )
+    #    print(np.shape(data))
+    #    print(np.shape(model))
+
+    if verbose : print("Total number of data bins=" , len(data))
+    cstat = 0.
+    ce_sum = 0.
+    cv_sum = 0.
+    chi2bfit = 0.
+    for i in range(len(data)) :
+        if model[i] <= 0 : model[i] = 1.0E-10
+        if data[i] > 0. :  cstat += model[i] - data[i] - data[i] * np.log(model[i]) + data[i] * np.log(data[i])
+        if data[i] <= 0. : cstat += model[i] - data[i] - data[i] * np.log(model[i]) + data[i]
+        if data[i] > 0 : chi2bfit += ((data[i] - model[i]) ** 2) / data[i]
+        if with_cstat_dev :
+            ce , cv = compute_ce_cv_from_kaastra_2017(model[i])
+            ce_sum += ce
+            cv_sum += cv
+    cstat = 2. * cstat
+    if verbose : print(f"C-stat = {cstat:0.1f}")
+    if verbose : print(f"Chi2  = {chi2bfit:0.1f}")
+    if with_cstat_dev :
+        if verbose : print(f"% Probability to get C-stat {cstat:0.1f} out of the expected C-stat {ce_sum:0.1f} "
+                       f"with standard deviation {np.sqrt(cv_sum):0.1f} = {100. * norm.sf(np.abs((cstat - ce_sum) / np.sqrt(cv_sum))):0.1f}%"
+                       f" - deviation ={(cstat - ce_sum) / np.sqrt(cv_sum):0.1f} sigma")
+
+    if with_cstat_dev :
+        return cstat , (cstat - ce_sum) / np.sqrt(cv_sum)
+    else :
+        return cstat
+    
+
+#=======================================================================================================================
+
+# Utility to print the best bit parameters in a tabulated form.
+def print_best_fit_parameters(x_obs,free_parameter_names,free_parameter_prior_types,median,lower,upper,cstat,cstat_dev):
+
+    # Apply transformation for "loguniform" prior types without copy
+    median = torch.as_tensor(np.where(np.array(free_parameter_prior_types) == "loguniform" , 10. ** median , median))
+    lower = torch.as_tensor(np.where(np.array(free_parameter_prior_types) == "loguniform" , 10. ** lower , lower))
+    upper = torch.as_tensor(np.where(np.array(free_parameter_prior_types) == "loguniform" , 10. ** upper , upper))
+
+
+    # Create a table using a loop
+    table_data = [("Parameter", "Best fit", "Negative error", "Positive error")]
+
+    for name , m , l , u in zip(free_parameter_names , median , lower , upper) :
+        table_data.append((name , f"{m:0.3f}" , f"-{m - l:0.3f}" , f"+{u - m:0.3f}"))
+
+    # Print the table
+    print(tabulate(table_data, tablefmt = "fancy_grid"))
+    print_message(f"These are the best fit results\nBest fit c-stat={cstat:.3f} ({len(x_obs)-len(free_parameter_names):d} d.o.f) - c-stat deviation={cstat_dev:.3f}")
