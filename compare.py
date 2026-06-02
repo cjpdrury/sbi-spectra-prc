@@ -24,9 +24,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "SIXSA", "SIXSA_CODES
 ### INPUT PARAMETERS ###
 yml_filename = '1_sri_config_cmin_cmax_restrictor_spectrum_20000'
 yml_path = 'SIXSA/SIXSA_YML_INPUT_FILES/' + yml_filename + ".yml"
+output_dir = 'OUTPUTS/'
 
 sixsa_path = 'SIXSA/SIXSA_OUTPUTS/' + yml_filename + "_run_results.pkl"
-output_dir = 'OUTPUTS/'
+
+repro_path = output_dir + yml_filename + "_run_results.pkl"
+
 
 # import SIXSA results
 with open(sixsa_path, "rb") as f:
@@ -35,17 +38,9 @@ with open(sixsa_path, "rb") as f:
 # for key, value in sixsa_run.__dict__.items():
     # print(key, type(value))
 
-
-
-import numpy as np
-import torch
-import pandas as pd
-import matplotlib
-import matplotlib.backends.backend_pdf
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
-from chainconsumer import ChainConsumer, Chain, Truth, PlotConfig
+# import reproduced results
+with open(repro_path, "rb") as f:
+    sbi_run = pickle.load(f)
 
 
 def compare_posteriors(sixsa_run, sbi_run, output_path="comparison_posteriors.png"):
@@ -131,8 +126,6 @@ def compare_posteriors(sixsa_run, sbi_run, output_path="comparison_posteriors.pn
 
 # --- Example usage ---
 # from compare_posteriors import compare_posteriors
-import copy
-sixsa_run_copy = copy.deepcopy(sixsa_run)
-compare_posteriors(sixsa_run, sixsa_run_copy, output_path=output_dir+yml_filename+"_comparison.png")
+compare_posteriors(sixsa_run, sbi_run, output_path=output_dir+yml_filename+"_comparison.png")
 
 

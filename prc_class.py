@@ -268,14 +268,16 @@ class sbi_run():
     def run_sri(self):
 
         # initialise NPE trainer object
-        self.inference = SNPE(self.prior)
-        self.posterior_net = self.inference.append_simulations(self.theta_train, self.x_train)
+        inference = SNPE(self.prior)
+        
+        # add simulations
+        inference.append_simulations(self.theta_train, self.x_train)
 
         # train the density estimator NN
-        self.density_estimator = self.inference.train()
+        density_estimator = inference.train()
 
         # construct DirectPosterior object
-        self.posterior = self.inference.build_posterior()
+        self.posterior = inference.build_posterior(density_estimator)
 
         # run the observed spectra through the density estimator and sample from the cond'd distribution
         self.posterior_theta = self.posterior.sample((self.number_of_posterior_samples,),
@@ -323,7 +325,7 @@ class sbi_run():
     def plot_sri_posteriors(self):
 
         # create the dataframe for chain consumer
-        self.df4cc = pd.DataFrame(self.posterior_theta, columns=self.free_parameter_names_for_plots_transformed)
+        df4cc = pd.DataFrame(self.posterior_theta, columns=self.free_parameter_names_for_plots_transformed)
 
         if self.type_of_inference == "single round inference":
             plot_title = f"SRI ({self.number_of_simulations_for_train_set:d} simulations)"
@@ -332,10 +334,10 @@ class sbi_run():
 
         c = ChainConsumer()
         c.set_plot_config(PlotConfig(usetex=True, serif=True, label_font_size=18, tick_font_size=14))
-        c.add_chain(Chain(samples=self.df4cc, name=plot_title, color="blue", bar_shade=True))
+        c.add_chain(Chain(samples=df4cc, name=plot_title, color="blue", bar_shade=True))
 
         # add the samples median (not the truth, this method is used for convenience)
-        truth_sri = dict(zip(self.df4cc.columns.values.tolist(), np.array(self.df4cc.median())))
+        truth_sri = dict(zip(df4cc.columns.values.tolist(), np.array(df4cc.median())))
         c.add_truth(Truth(location=truth_sri, color="blue"))
 
         fig = c.plotter.plot(figsize=(8, 10))
