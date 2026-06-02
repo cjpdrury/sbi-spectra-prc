@@ -4,9 +4,11 @@ from prc_class import sbi_run
 def main():
     
     # initial params
-    yml_file = "SISXA_YML_INPUT_FILES/" + "1_sri_config_cmin_cmax_restrictor_spectrum_20000.yml"
+    yml_dir = "YML_INPUT_FILES/"
+    yml_file = yml_dir+"1_sri_config_cmin_cmax_restrictor_spectrum_20000.yml"
+
     make_plots = True
-    
+
 
     # setup inference
     sbi_demo = sbi_run(yml_file)
@@ -25,6 +27,10 @@ def main():
         sbi_demo.plot_prior_predictive_check()
         sbi_demo.plot_sri_spectrum()
         sbi_demo.plot_sri_posteriors()
+
+
+    # save results 
+    sbi_demo.save_run_in_pickle_file()
 
 
 if __name__ == "__main__":

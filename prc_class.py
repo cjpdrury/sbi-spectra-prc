@@ -11,6 +11,9 @@ import numpy as np
 import pandas as pd
 import torch
 from tabulate import tabulate
+import click
+import dill as pickle
+
 from sbi import utils
 from sbi.inference import SNPE
 from sbi.analysis import pairplot
@@ -31,10 +34,13 @@ class sbi_run():
 
     def __init__(self, yml_file):
         
+
         # open config yaml file
         self.yml_file = yml_file
         with open(yml_file , 'r') as config_file :
             self.config = yaml.safe_load(config_file)
+
+        print('HERE', yml_file)
 
         # Create a list of tuples containing variable name and value pairs
         table_data = [(key , value) for key , value in  self.config.items( )]
@@ -45,6 +51,7 @@ class sbi_run():
         # read parameters
         self.path_pha =  self.config['path_pha']
         self.reference_pha =  self.config['reference_pha']
+
         self.energy_min =  self.config['energy_range'][0]
         self.energy_max =  self.config['energy_range'][1]
         self.jaxspec_model_expression =  self.config['jaxspec_model_expression']
@@ -78,6 +85,7 @@ class sbi_run():
 
         self.number_of_posterior_samples =  self.config['number_of_posterior_samples']
 
+        # don't use the root here, output to main dir
         self.path_outputs =  self.config["path_outputs"]
         if not os.path.exists(self.path_outputs) :
             os.makedirs(self.path_outputs)
@@ -86,6 +94,7 @@ class sbi_run():
             print(f"Directory '{self.path_outputs}' already exists.")
 
         self.root_output_files = os.path.basename(self.yml_file).replace(".yml" , "_")
+        print('HERE', self.root_output_files)
         self.x_obs_reference=None
         self.use_summary=self.config.get("use_summary_statistics", False)
 
@@ -272,7 +281,6 @@ class sbi_run():
         self.posterior_theta = self.posterior.sample((self.number_of_posterior_samples,),
                                                     x=self.x_obs_reference)
 
-        print(np.shape(self.posterior_theta))
 
         # get median theta and percentiles
         self.best_fit_parameters = np.median(self.posterior_theta, axis=0)
@@ -291,34 +299,42 @@ class sbi_run():
         # Now computing the cstat of the best fit and its deviation against the expected value
         # From Kaastra(2017) https://ui.adsabs.harvard.edu/abs/2017A%26A...605A..51K/abstract
         #
-        self.cstat_median_posterior_sample , self.cstat_dev_median_posterior_sample = compute_cstat(self.x_obs_reference , np.array(self.x_from_median), verbose = True)
+        self.cstat_median_posterior_sample, self.cstat_dev_median_posterior_sample = compute_cstat(self.x_obs_reference, 
+                                                                                                   np.array(self.x_from_median), 
+                                                                                                   verbose = True)
 
-        print_best_fit_parameters(self.x_obs_reference, self.free_parameter_names_for_plots , self.free_parameter_prior_types ,self.best_fit_parameters , self.best_fit_parameters_lower_bounds ,self.best_fit_parameters_upper_bounds ,self.cstat_median_posterior_sample , self.cstat_dev_median_posterior_sample)
+        print_best_fit_parameters(self.x_obs_reference, self.free_parameter_names_for_plots , 
+                                  self.free_parameter_prior_types ,self.best_fit_parameters , 
+                                  self.best_fit_parameters_lower_bounds ,self.best_fit_parameters_upper_bounds ,
+                                  self.cstat_median_posterior_sample , self.cstat_dev_median_posterior_sample)
 
 
-        # compute spectra x for posterior samples
+        # compute spectra x for all posterior samples
         self.x_from_posterior_sample = compute_x_sim(self.jaxspec_model_expression,
                                                     self.parameter_states, self.posterior_theta,
                                                     self.pha_filename, self.energy_min, self.energy_max,
                                                     self.free_parameter_prior_types, self.parameter_lower_bounds,
                                                     apply_stat=True, verbose=True)
-
-        # create the dataframe for chain consumer
-        self.df4cc = pd.DataFrame(self.posterior_theta, columns=self.free_parameter_names_for_plots_transformed)
+        
+        print(np.shape(self.x_from_posterior_sample))
 
     
     # ==============================================================================================================
     def plot_sri_posteriors(self):
 
+        # create the dataframe for chain consumer
+        self.df4cc = pd.DataFrame(self.posterior_theta, columns=self.free_parameter_names_for_plots_transformed)
+
         if self.type_of_inference == "single round inference":
             plot_title = f"SRI ({self.number_of_simulations_for_train_set:d} simulations)"
-        elif self.type_of_inference == "multiple round inference":
-            plot_title = f"MRI ({self.number_of_simulations_for_train_set:d} x {self.number_of_rounds_for_multiple_inference:d} simulations)"
+        # elif self.type_of_inference == "multiple round inference":
+            # plot_title = f"MRI ({self.number_of_simulations_for_train_set:d} x {self.number_of_rounds_for_multiple_inference:d} simulations)"
 
         c = ChainConsumer()
         c.set_plot_config(PlotConfig(usetex=True, serif=True, label_font_size=18, tick_font_size=14))
         c.add_chain(Chain(samples=self.df4cc, name=plot_title, color="blue", bar_shade=True))
 
+        # add the samples median (not the truth, this method is used for convenience)
         truth_sri = dict(zip(self.df4cc.columns.values.tolist(), np.array(self.df4cc.median())))
         c.add_truth(Truth(location=truth_sri, color="blue"))
 
@@ -335,22 +351,28 @@ class sbi_run():
 
         if self.type_of_inference == "single round inference":
             plot_title = f"SRI ({self.number_of_simulations_for_train_set:d} simulations)"
-        elif self.type_of_inference == "multiple round inference":
-            plot_title = f"MRI ({self.number_of_simulations_for_train_set:d} x {self.number_of_rounds_for_multiple_inference:d} simulations)"
+        # elif self.type_of_inference == "multiple round inference":
+            # plot_title = f"MRI ({self.number_of_simulations_for_train_set:d} x {self.number_of_rounds_for_multiple_inference:d} simulations)"
 
+        # compute Gehrels approximation (low counts) for uncertainty
         gehrels_error_counts = (1. + (0.75 + np.array(self.x_obs_reference)) ** 0.5)
+
+        # compute sigma-scaled residuals
         best_fit_residuals = (np.array(self.x_obs_reference) - np.array(self.x_from_median)) / np.array(gehrels_error_counts)
 
+        # create plots
         fig, ax = plt.subplots(2, 1, figsize=(8, 10), sharex=True, height_ratios=[0.8, 0.2])
         plt.subplots_adjust(hspace=0.0)
 
-        # Plotting the data, best fit, and coverage
+        # plotting the data, best fit, and coverage
         ax[0].step(0.5 * (self.e_min_folded + self.e_max_folded), self.x_obs_reference, where="mid",
                 label=f"Observed spectrum ({np.int32(np.sum(self.x_obs_reference)):d} counts)",
                 color="black")
         ax[0].step(0.5 * (self.e_min_folded + self.e_max_folded), self.x_from_median.flatten(), where="mid",
                 label=f"Best fit ({self.cstat_median_posterior_sample:0.1f}, {self.cstat_dev_median_posterior_sample:0.1f}$\sigma$)",
                 color="blue")
+        
+        # coverage is defined over the spectral range, not in theta space
         ax[0].fill_between(
             0.5 * (self.e_min_folded + self.e_max_folded),
             *np.percentile(self.x_from_posterior_sample, [16, 84], axis=0),
@@ -390,13 +412,17 @@ class sbi_run():
 
 
 
-# ====================================================================================================================
-    def plot_posterior_at_x_obs(self):
+    # ====================================================================================================================
+    def save_run_in_pickle_file(self):
+        self.pkl_filename=self.path_outputs + self.root_output_files + "run_results.pkl"
 
-        # plot
-        fig, ax = pairplot(self.posterior_theta)
-        fig.savefig(self.path_outputs + self.root_output_files + "posterior_pairplot.png", dpi=150, bbox_inches="tight")
-        plt.close(fig)
+        if os.path.exists(self.pkl_filename) and click.confirm(
+                f"{self.pkl_filename} exists. Do you still want to save the run results?" , default = False) :
+            with open(self.pkl_filename , "wb") as handle :
+                pickle.dump(self , handle , pickle.HIGHEST_PROTOCOL)
+        else :
+            with open(self.pkl_filename , "wb") as handle :
+                pickle.dump(self , handle , pickle.HIGHEST_PROTOCOL)
 
 
 

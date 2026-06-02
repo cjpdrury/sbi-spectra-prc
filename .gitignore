@@ -5,10 +5,10 @@ build/
 dist/
 wheels/
 *.egg-info
-SIXSA_REFERENCE_SPECTRA/
-SISXA_YML_INPUT_FILES/
+YML_INPUT_FILES/
 OUTPUTS/
 sbi-logs/
+SIXSA/
 
 # Virtual environments
 .venv
