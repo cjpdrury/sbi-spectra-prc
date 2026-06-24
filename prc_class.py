@@ -384,7 +384,9 @@ class sbi_run():
         ax.set_xlim(0, num_bins_used)
         ax.set_xticks(np.linspace(0, num_bins_used, 5))
         ax.set_xticklabels([f"{t:.2f}" for t in np.linspace(0, 1, 5)])
-        ax.set_xlabel("posterior rank (normalized)")
+        ax.set_xlabel("Rank (normalized)")
+        ax.set_title('Rank Cumulative Density Function (PRC)')
+        f.set_size_inches(8, 6)
 
         png_filename = self.path_outputs + self.root_output_files + "sbc_rank_plot_cumulative.png"
         f.savefig(png_filename, dpi=300, bbox_inches="tight")
