@@ -16,7 +16,8 @@ import dill as pickle
 
 from sbi import utils
 from sbi.inference import SNPE
-from sbi.analysis import pairplot
+from sbi.analysis import pairplot, check_sbc, run_sbc, get_nltp, sbc_rank_plot
+
 
 # from sbi.utils import RestrictionEstimator , RestrictedPrior , get_density_thresholder
 from jaxspec.data import ObsConfiguration
@@ -318,7 +319,68 @@ class sbi_run():
                                                     self.free_parameter_prior_types, self.parameter_lower_bounds,
                                                     apply_stat=True, verbose=True)
         
-        print(np.shape(self.x_from_posterior_sample))
+
+
+    # ==============================================================================================================
+    def sbc_calibration(self):
+        
+        # sbc parameters
+        num_sbc_runs = 1000  # should be ~100s or ideally 1000
+        num_posterior_samples_sbc = 1000 # number of posterior samples per sbc run
+
+        # generate ground truth parameters and corresponding simulated observations for sbc
+        theta_sbc = self.prior.sample((num_sbc_runs,))
+        x_sbc = compute_x_sim(self.jaxspec_model_expression , self.parameter_states , theta_sbc ,
+                                self.pha_filename ,
+                                self.energy_min , self.energy_max ,
+                                self.free_parameter_prior_types , self.parameter_lower_bounds , apply_stat = True ,
+                                verbose = False)
+
+        # run sbc calibration
+        ranks, dap_samples = run_sbc(
+            theta_sbc, x_sbc, self.posterior, num_posterior_samples=num_posterior_samples_sbc
+        )
+
+        # collect metrics to judge posterior 
+        check_stats = check_sbc(
+            ranks, theta_sbc, dap_samples, num_posterior_samples=num_posterior_samples_sbc
+        )
+
+        print(f'summary statistics:\n'
+              + f"kolmogorov-smirnov p-values \ncheck_stats['ks_pvals'] = {check_stats['ks_pvals'].numpy()}"
+              + f"c2st accuracies \ncheck_stats['c2st_ranks'] = {check_stats['c2st_ranks'].numpy()}"
+              + f"- c2st accuracies check_stats['c2st_dap'] = {check_stats['c2st_dap'].numpy()}")
+
+        # histograms plot
+        f, ax = sbc_rank_plot(
+            ranks= ranks,
+            num_posterior_samples=num_posterior_samples_sbc,
+            plot_type="hist",
+            parameter_labels=self.free_parameter_names_for_plots_transformed,
+            num_bins=None,  # by passing None we use a heuristic for the number of bins.
+        )
+
+        png_filename = self.path_outputs + self.root_output_files + "sbc_rank_plot.png"
+        f.savefig(png_filename, dpi=300, bbox_inches="tight")
+
+        # cumlative rank plot
+        f, ax = sbc_rank_plot(
+            ranks= ranks,
+            num_posterior_samples=num_posterior_samples_sbc,
+            plot_type="cdf",
+            parameter_labels=self.free_parameter_names_for_plots_transformed,
+            num_bins=None,  # by passing None we use a heuristic for the number of bins.
+        )
+        
+        num_bins_used = num_sbc_runs // 20  # sbi's heuristic, since num_bins=None
+        ax.set_xlim(0, num_bins_used)
+        ax.set_xticks(np.linspace(0, num_bins_used, 5))
+        ax.set_xticklabels([f"{t:.2f}" for t in np.linspace(0, 1, 5)])
+        ax.set_xlabel("posterior rank (normalized)")
+
+        png_filename = self.path_outputs + self.root_output_files + "sbc_rank_plot_cumulative.png"
+        f.savefig(png_filename, dpi=300, bbox_inches="tight")
+        
 
     
     # ==============================================================================================================
@@ -347,6 +409,38 @@ class sbi_run():
         png_filename = self.path_outputs + self.root_output_files + "posteriors_at_reference_spectrum.png"
         fig.savefig(png_filename, dpi=150, bbox_inches="tight")
         plt.close(fig)
+
+
+        # try log prob plot
+        log_probs = self.posterior.log_prob(self.posterior_theta, x=self.x_obs_reference)
+        fig, axes = plt.subplots(3, 3, figsize=(10, 10))
+        param_names = [r'$\log(N_h)$', r'$\Gamma$', r'$\log(N_{pl})$']
+
+        for i in range(3):
+            for j in range(3):
+                ax = axes[i, j]
+                if i == j:
+                    ax.hist(self.posterior_theta[:, i].numpy(), bins=50)
+                elif i > j:
+                    sc = ax.scatter(
+                        self.posterior_theta[:, j].numpy(),
+                        self.posterior_theta[:, i].numpy(),
+                        c=log_probs.numpy(),
+                        cmap='viridis',
+                        s=1,
+                        alpha=0.5
+                    )
+                    plt.colorbar(sc, ax=ax, label=r'$\log q_\phi$')
+                else:
+                    ax.axis('off')
+                
+                if i == 2: ax.set_xlabel(param_names[j])
+                if j == 0: ax.set_ylabel(param_names[i])
+
+        png_filename = self.path_outputs + self.root_output_files + "log_probs.png"
+        fig.savefig(png_filename, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+
 
     #===================================================================================================================
     def plot_sri_spectrum(self):

@@ -32,6 +32,10 @@ def main():
     # save results 
     sbi_demo.save_run_in_pickle_file()
 
+    # calibration tests
+    sbi_demo.sbc_calibration()
+
+
 
 if __name__ == "__main__":
     main()
