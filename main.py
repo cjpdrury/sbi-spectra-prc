@@ -7,18 +7,27 @@ def main():
     yml_dir = "YML_INPUT_FILES/"
     yml_file = yml_dir+"1_sri_config_cmin_cmax_restrictor_spectrum_20000.yml"
 
-    make_plots = True
-
+    make_plots = False
+    run_from_pickle = True
 
     # setup inference
     sbi_demo = sbi_run(yml_file)
     sbi_demo.read_data_and_init_global_prior()
 
-    # sample from prior and simulate
-    sbi_demo.generate_train_and_test_data()
+    # use existing results if wanted
+    if run_from_pickle:
+        sbi_demo.load_run_from_pickle_file()
 
-    # run single round inference
-    sbi_demo.run_sri()
+    else:
+
+        # sample from prior and simulate
+        sbi_demo.generate_train_and_test_data()
+
+        # run single round inference
+        sbi_demo.run_sri()
+
+        # save results 
+        sbi_demo.save_run_in_pickle_file()
     
 
     # construct plots
@@ -29,11 +38,9 @@ def main():
         sbi_demo.plot_sri_posteriors()
 
 
-    # save results 
-    sbi_demo.save_run_in_pickle_file()
-
     # calibration tests
     sbi_demo.sbc_calibration()
+    # sbi_demo.coverage_zz_plot()
 
 
 

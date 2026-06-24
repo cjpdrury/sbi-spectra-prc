@@ -13,10 +13,12 @@ import torch
 from tabulate import tabulate
 import click
 import dill as pickle
+from scipy.stats import norm
 
 from sbi import utils
 from sbi.inference import SNPE
 from sbi.analysis import pairplot, check_sbc, run_sbc, get_nltp, sbc_rank_plot
+
 
 
 # from sbi.utils import RestrictionEstimator , RestrictedPrior , get_density_thresholder
@@ -320,7 +322,6 @@ class sbi_run():
                                                     apply_stat=True, verbose=True)
         
 
-
     # ==============================================================================================================
     def sbc_calibration(self):
         
@@ -352,18 +353,25 @@ class sbi_run():
               + f"- c2st accuracies check_stats['c2st_dap'] = {check_stats['c2st_dap'].numpy()}")
 
         # histograms plot
+        ranks = ranks / num_posterior_samples_sbc # normalise ranks
         f, ax = sbc_rank_plot(
             ranks= ranks,
-            num_posterior_samples=num_posterior_samples_sbc,
+            num_posterior_samples=1,
             plot_type="hist",
-            parameter_labels=self.free_parameter_names_for_plots_transformed,
             num_bins=None,  # by passing None we use a heuristic for the number of bins.
         )
 
+        for i, (axs, lab) in enumerate(zip(ax, self.free_parameter_names_for_plots_transformed)):
+            axs.set_title(f"{lab} \nks_pval: {check_stats['ks_pvals'][i]:.2g}"
+                          + f"\nc2st_ranks: {check_stats['c2st_ranks'][i]:.2g}"
+                          + f"\nc2st_dap: {check_stats['c2st_dap'][i]:.2g}")
+            axs.set_xlabel(f"Rank (normalised)" )
+
+        f.set_size_inches(10, 4)
         png_filename = self.path_outputs + self.root_output_files + "sbc_rank_plot.png"
         f.savefig(png_filename, dpi=300, bbox_inches="tight")
 
-        # cumlative rank plot
+        ### cumlative rank plot ###
         f, ax = sbc_rank_plot(
             ranks= ranks,
             num_posterior_samples=num_posterior_samples_sbc,
@@ -371,7 +379,7 @@ class sbi_run():
             parameter_labels=self.free_parameter_names_for_plots_transformed,
             num_bins=None,  # by passing None we use a heuristic for the number of bins.
         )
-        
+
         num_bins_used = num_sbc_runs // 20  # sbi's heuristic, since num_bins=None
         ax.set_xlim(0, num_bins_used)
         ax.set_xticks(np.linspace(0, num_bins_used, 5))
@@ -381,6 +389,119 @@ class sbi_run():
         png_filename = self.path_outputs + self.root_output_files + "sbc_rank_plot_cumulative.png"
         f.savefig(png_filename, dpi=300, bbox_inches="tight")
         
+
+    # ==============================================================================================================
+    def expected_coverage(self):
+
+        # expected coverage parameters
+        num_ec_samples = 200  # choose a number of ec runs, should be ~100s
+        prior_samples = self.prior.sample((num_ec_samples,))
+        prior_predictives = compute_x_sim(self.jaxspec_model_expression , self.parameter_states , prior_samples ,
+                                self.pha_filename ,
+                                self.energy_min , self.energy_max ,
+                                self.free_parameter_prior_types , self.parameter_lower_bounds , apply_stat = True ,
+                                verbose = False)
+
+
+        # run EC: for each inference we draw 1000 posterior samples.
+        num_posterior_samples = 1000
+        ranks, dap_samples = run_sbc(
+            prior_samples,
+            prior_predictives,
+            self.posterior,
+            reduce_fns=lambda theta, x: -self.posterior.log_prob(theta, x),
+            num_posterior_samples=num_posterior_samples,
+        )
+        
+        f, ax = sbc_rank_plot(
+            ranks,
+            num_posterior_samples,
+            plot_type="cdf",
+            num_bins=20,
+            figsize=(5, 3),
+            parameter_labels=self.free_parameter_names_for_plots_transformed,
+        )
+        
+        png_filename = self.path_outputs + self.root_output_files + "expected_coverage.png"
+        f.savefig(png_filename, dpi=300, bbox_inches="tight")
+
+
+
+
+
+
+    # ==============================================================================================================
+    def coverage_zz_plot(self):
+
+        num_coverage_samples = 500
+        prior_samples = self.prior.sample((num_coverage_samples,))
+        prior_predictives = compute_x_sim(self.jaxspec_model_expression , self.parameter_states , prior_samples ,
+                                self.pha_filename ,
+                                self.energy_min , self.energy_max ,
+                                self.free_parameter_prior_types , self.parameter_lower_bounds , apply_stat = True ,
+                                verbose = False)
+
+        num_posterior_samples = 1000
+        # credible levels to test, e.g. central intervals of width alpha
+        alphas = np.linspace(0.01, 0.99, 50)
+
+        # for each simulation, draw posterior samples and get the rank of the truth
+        # (this reuses the same "rank" concept as SBC, just framed as coverage)
+        empirical_coverage = np.zeros_like(alphas)
+
+        all_ranks = []
+        for i in range(num_coverage_samples):
+            theta_true = prior_samples[i]
+            x_obs = prior_predictives[i]
+            posterior_samples_i = self.posterior.sample((num_posterior_samples,), x=x_obs, 
+                                                        show_progress_bars=False)
+
+            # for a 1D reduced statistic (log-prob), get a single rank per simulation
+            log_prob_true = self.posterior.log_prob(theta_true.unsqueeze(0), x=x_obs)
+            log_prob_samples = self.posterior.log_prob(posterior_samples_i, x=x_obs)
+            
+            # compute indicator function
+            rank = (log_prob_samples > log_prob_true).sum().item()
+            all_ranks.append(rank / num_posterior_samples)  # normalize to (0,1)
+
+        all_ranks = np.array(all_ranks)
+
+        # for central credible interval of width alpha, truth is "covered" if its
+        # normalized rank falls within the central alpha fraction of the rank distribution
+        for j, alpha in enumerate(alphas):
+            lower = (1 - alpha) / 2
+            upper = 1 - lower
+            empirical_coverage[j] = np.mean((all_ranks >= lower) & (all_ranks <= upper))
+
+        # probit-transform both axes to get z-score framing
+        z_nominal = norm.ppf(0.5 + alphas / 2)       # one-sided z for width alpha
+        z_empirical = norm.ppf(0.5 + empirical_coverage / 2)
+
+
+        # make the plot
+        fig, ax = plt.subplots(figsize=(5, 5))
+        ax.plot(z_nominal, z_empirical, label = "PRC coverage")
+        
+        max_z = max(z_nominal.max(), z_empirical.max())
+        ax.plot([0, max_z], [0, max_z], "k--", lw=1, label="calibrated")
+
+        ax.set_title('$z-z$ plot (PRC)')
+        ax.set_xlabel(r"Nominal coverage ($z$-score)")
+        ax.set_ylabel(r"Empirical coverage ($\hat{z}$-score)")
+        
+        ax.set_xlim(0,2.5)
+        ax.set_ylim(0,2.5)
+
+        ax.tick_params(axis="both", which="both", top=True, right=True, direction="in")
+        ax.minorticks_on()
+        ax.tick_params(axis="both", which="minor", top=True, right=True, direction="in")
+        
+        ax.legend()
+        ax.grid()
+        fig.tight_layout()
+
+        png_filename = self.path_outputs + self.root_output_files + "coverage_zz.png"
+        fig.savefig(png_filename, dpi=300, bbox_inches="tight")
 
     
     # ==============================================================================================================
@@ -507,6 +628,15 @@ class sbi_run():
         plt.close(fig)
 
 
+    # ====================================================================================================================
+    def load_run_from_pickle_file(self):
+        self.pkl_filename = self.path_outputs + self.root_output_files + "run_results.pkl"
+
+        with open(self.pkl_filename, "rb") as handle:
+            loaded_self = pickle.load(handle)
+
+        self.__dict__.update(loaded_self.__dict__)
+
 
     # ====================================================================================================================
     def save_run_in_pickle_file(self):
@@ -519,6 +649,8 @@ class sbi_run():
         else :
             with open(self.pkl_filename , "wb") as handle :
                 pickle.dump(self , handle , pickle.HIGHEST_PROTOCOL)
+
+        
 
 
 
