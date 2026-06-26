@@ -7,8 +7,12 @@ def main():
     yml_dir = "YML_INPUT_FILES/"
     yml_file = yml_dir+"1_sri_config_cmin_cmax_restrictor_spectrum_20000.yml"
 
-    make_plots = False
+    # sections to run
     run_from_pickle = True
+    make_plots = False
+    run_calibration = True
+    
+
 
     # setup inference
     sbi_demo = sbi_run(yml_file)
@@ -39,8 +43,9 @@ def main():
 
 
     # calibration tests
-    sbi_demo.sbc_calibration()
-    # sbi_demo.coverage_zz_plot()
+    if run_calibration:
+        sbi_demo.sbc_calibration()
+        sbi_demo.coverage_zz_plot()
 
 
 
