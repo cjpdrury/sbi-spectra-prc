@@ -8,8 +8,8 @@ def main():
     yml_file = yml_dir+"1_sri_config_cmin_cmax_restrictor_spectrum_20000.yml"
 
     # sections to run
-    run_from_pickle = True
-    make_plots = False
+    run_from_pickle = False
+    make_plots = True
     run_calibration = True
     
 
@@ -24,6 +24,9 @@ def main():
 
     else:
 
+        # restrict the priors
+        sbi_demo.compute_restricted_prior()
+
         # sample from prior and simulate
         sbi_demo.generate_train_and_test_data()
 
@@ -36,7 +39,7 @@ def main():
 
     # construct plots
     if make_plots:
-        sbi_demo.plot_prior()
+        sbi_demo.plot_priors()
         sbi_demo.plot_prior_predictive_check()
         sbi_demo.plot_sri_spectrum()
         sbi_demo.plot_sri_posteriors()

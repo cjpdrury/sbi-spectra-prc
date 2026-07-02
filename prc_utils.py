@@ -329,3 +329,10 @@ def print_best_fit_parameters(x_obs,free_parameter_names,free_parameter_prior_ty
 
 
 #=======================================================================================================================
+def generate_function_for_cmin_cmax_restrictor(cmin = 1000, cmax = 10000):
+
+    def get_valid_x(x): 
+        valid_x_array = [cmin <= np.sum(x_p.numpy( )) <= cmax for x_p in x]
+        return torch.as_tensor(valid_x_array)
+    
+    return get_valid_x

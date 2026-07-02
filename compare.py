@@ -53,9 +53,9 @@ spectra_data_prc = get_spectrum_data(sbi_run,
 
 
 # plot the comparison of both posteriors
-# plot_sixsa_and_prc_posteriors(sixsa_run, samples_sixsa, 
-                            #   sbi_run, samples_prc, 
-                            #   output_path=output_dir+yml_filename+"_comparison.png")
+plot_sixsa_and_prc_posteriors(sixsa_run, samples_sixsa, 
+                              sbi_run, samples_prc, 
+                              output_path=output_dir+yml_filename+"_comparison.png")
 
 
 # compare posterior sampled spectra

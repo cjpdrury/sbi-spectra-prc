@@ -16,6 +16,7 @@ import dill as pickle
 from scipy.stats import norm
 
 from sbi import utils
+from sbi.utils import RestrictionEstimator
 from sbi.inference import SNPE
 from sbi.analysis import pairplot, check_sbc, run_sbc, get_nltp, sbc_rank_plot
 
@@ -26,7 +27,8 @@ from jaxspec.data import ObsConfiguration
 from jaxspec.data.util import fakeit_for_multiple_parameters
 from jaxspec.model.abc import SpectralModel
 
-from prc_utils import summary_statistics_func, print_message, print_best_fit_parameters, compute_x_sim, compute_cstat
+from prc_utils import summary_statistics_func, print_message, print_best_fit_parameters, \
+                        compute_x_sim, compute_cstat, generate_function_for_cmin_cmax_restrictor
 
 
 # class for performing sbi
@@ -201,11 +203,58 @@ class sbi_run():
 
         # initialise uniform prior from parameters
         self.prior = utils.BoxUniform(low = low_v , high = high_v)
+
+    # ===============================================================================================================
+    def compute_restricted_prior(self):
+
+
+        if self.restricted_prior_type=="cmin_cmax_restricted_prior" :
+            
+            generate_restrictor_function_kwargs = {"cmin" : self.c_min_for_restricted_prior ,
+                                                   "cmax" : self.c_max_for_restricted_prior}
+            
+            select_good_x = generate_function_for_cmin_cmax_restrictor(**generate_restrictor_function_kwargs)
+
+
+            restriction_estimator = RestrictionEstimator(decision_criterion=select_good_x, prior=self.prior)
+            self.rp_proposals = [self.prior]
+
+            for r in range(self.number_of_rounds_for_restricted_prior):
+                # draw theta from restricted prior and simulate
+                theta = self.rp_proposals[-1].sample((self.number_of_simulations_for_restricted_prior,))
+                x = compute_x_sim(self.jaxspec_model_expression, self.parameter_states,
+                                            theta,
+                                            self.pha_filename, self.energy_min, self.energy_max,
+                                            self.free_parameter_prior_types, self.parameter_lower_bounds,
+                                            apply_stat=False, verbose=True)
+                
+                # add simulations
+                restriction_estimator.append_simulations(theta, x)
+                
+                # training not needed in last round because classifier will not be used anymore.
+                if (r < self.number_of_rounds_for_restricted_prior - 1):     
+                    classifier = restriction_estimator.train()
+                
+                self.rp_proposals.append(restriction_estimator.restrict_prior())
+                
+            self.restricted_prior = self.rp_proposals[-1]
+
+        else: 
+            self.restricted_prior = None
         
+            
+
+
 
     # ===============================================================================================================
 
-    def plot_prior(self):
+    def plot_priors(self):
+        
+        # whether to plot multiple rounds of restriction
+        plot_rp_rounds = [1,2, 3, -1]
+        file_addon = ""
+
+        # draw from the global prior and restricted
         theta_from_global_prior = self.prior.sample((10 * self.number_of_posterior_samples,))
         df_theta_from_global_prior = pd.DataFrame(theta_from_global_prior,
                                                 columns=self.free_parameter_names_for_plots_transformed)
@@ -215,12 +264,27 @@ class sbi_run():
         c.add_chain(Chain(samples=df_theta_from_global_prior,
                         name="Global initial prior",
                         color="blue", bar_shade=True))
+        
+        # plot restricted priors if made
+        if self.restricted_prior is not None:            
+            if plot_rp_rounds is not None:
+                file_addon = "_rp_rounds"
+                cols = ['red', 'orange', 'green']
+                for col, r in zip(cols, plot_rp_rounds):
+                    theta_from_restricted_prior = self.rp_proposals[r].sample((10 * self.number_of_posterior_samples,))
+                    df_theta_from_restricted_prior = pd.DataFrame(theta_from_restricted_prior,
+                                                            columns=self.free_parameter_names_for_plots_transformed)
+                    c.add_chain(Chain(samples=df_theta_from_restricted_prior,
+                                name=f"Restricted prior R={r}",
+                                color=col, bar_shade=True))
+
+
 
         fig = c.plotter.plot(figsize=(8, 10))
         fig.align_ylabels()
         fig.align_xlabels()
 
-        png_filename = self.path_outputs + self.root_output_files + "prior.png"
+        png_filename = self.path_outputs + self.root_output_files + "prior" + file_addon + ".png"
         fig.savefig(png_filename, dpi=150, bbox_inches="tight")
         plt.close()
 
@@ -229,8 +293,15 @@ class sbi_run():
     # ===============================================================================================================
     def generate_train_and_test_data(self):
         
+        # select prior type
+        if self.restricted_prior is not None:
+            prior = self.restricted_prior
+        else:
+            prior = self.prior
+
+
         # generate sample pairs from training
-        self.theta_train = self.prior.sample((self.number_of_simulations_for_train_set,))
+        self.theta_train = prior.sample((self.number_of_simulations_for_train_set,))
         print(f"Generating the simulations that will be used for the inference")
         start_time = time.perf_counter( )
         self.x_train = compute_x_sim(self.jaxspec_model_expression , self.parameter_states , self.theta_train ,
@@ -240,7 +311,7 @@ class sbi_run():
                                 verbose = False)
         
         # generate sample pairs from testing
-        self.theta_test = self.prior.sample((self.number_of_simulations_for_test_set ,))
+        self.theta_test = prior.sample((self.number_of_simulations_for_test_set ,))
         self.x_test = compute_x_sim(self.jaxspec_model_expression , self.parameter_states, 
                                     self.theta_test , self.pha_filename , self.energy_min , self.energy_max ,
                                     self.free_parameter_prior_types , self.parameter_lower_bounds , apply_stat = True ,
@@ -284,8 +355,9 @@ class sbi_run():
     #===================================================================================================================
     def run_sri(self):
 
+
         # initialise NPE trainer object
-        inference = SNPE(self.prior)
+        inference = SNPE(prior = self.prior)
         
         # add simulations
         inference.append_simulations(self.theta_train, self.x_train)
@@ -339,12 +411,20 @@ class sbi_run():
     # ==============================================================================================================
     def sbc_calibration(self):
         
+        # select prior type
+        if self.restricted_prior is not None:
+            prior = self.restricted_prior
+            filename_addon = "_restricted"
+        else:
+            prior = self.prior
+            filename_addon = ""
+
         # sbc parameters
         num_sbc_runs = 1000  # should be ~100s or ideally 1000
         num_posterior_samples_sbc = 1000 # number of posterior samples per sbc run
 
         # generate ground truth parameters and corresponding simulated observations for sbc
-        theta_sbc = self.prior.sample((num_sbc_runs,))
+        theta_sbc = prior.sample((num_sbc_runs,))
         x_sbc = compute_x_sim(self.jaxspec_model_expression , self.parameter_states , theta_sbc ,
                                 self.pha_filename ,
                                 self.energy_min , self.energy_max ,
@@ -382,7 +462,7 @@ class sbi_run():
             axs.set_xlabel(f"Rank" )
 
         f.set_size_inches(10, 4)
-        png_filename = self.path_outputs + self.root_output_files + "sbc_rank_plot.png"
+        png_filename = self.path_outputs + self.root_output_files + "sbc_rank_plot" + filename_addon + ".png"
         f.savefig(png_filename, dpi=300, bbox_inches="tight")
 
         ### cumlative rank plot ###
@@ -402,13 +482,22 @@ class sbi_run():
         ax.set_title('Rank Cumulative Density Function (PRC)')
         f.set_size_inches(8, 6)
 
-        png_filename = self.path_outputs + self.root_output_files + "sbc_rank_plot_cumulative.png"
+        png_filename = self.path_outputs + self.root_output_files + "sbc_rank_plot_cumulative" + filename_addon + ".png"
         f.savefig(png_filename, dpi=300, bbox_inches="tight")
         
 
 
     # ==============================================================================================================
     def coverage_zz_plot(self):
+
+
+        # select prior type
+        if self.restricted_prior is not None:
+            prior = self.restricted_prior
+            filename_addon = "_restricted"
+        else:
+            prior = self.prior
+            filename_addon = ""
 
         ### ------------------------------------
         ## define expected coverage parameters
@@ -420,7 +509,7 @@ class sbi_run():
         ### ------------------------------------
 
         # draw calibration sample pairs
-        prior_samples = self.prior.sample((num_coverage_samples,))
+        prior_samples = prior.sample((num_coverage_samples,))
         prior_predictives = compute_x_sim(self.jaxspec_model_expression , self.parameter_states , prior_samples ,
                                 self.pha_filename ,
                                 self.energy_min , self.energy_max ,
@@ -483,7 +572,7 @@ class sbi_run():
         ax.grid()
         fig.tight_layout()
 
-        png_filename = self.path_outputs + self.root_output_files + "coverage_zz.png"
+        png_filename = self.path_outputs + self.root_output_files + "coverage_zz" + filename_addon + ".png"
         fig.savefig(png_filename, dpi=300, bbox_inches="tight")
 
     
