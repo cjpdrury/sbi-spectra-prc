@@ -45,8 +45,6 @@ class sbi_run():
         with open(yml_file , 'r') as config_file :
             self.config = yaml.safe_load(config_file)
 
-        print('HERE', yml_file)
-
         # Create a list of tuples containing variable name and value pairs
         table_data = [(key , value) for key , value in  self.config.items( )]
 
@@ -99,7 +97,6 @@ class sbi_run():
             print(f"Directory '{self.path_outputs}' already exists.")
 
         self.root_output_files = os.path.basename(self.yml_file).replace(".yml" , "_")
-        print('HERE', self.root_output_files)
         self.x_obs_reference=None
         self.use_summary=self.config.get("use_summary_statistics", False)
 
@@ -174,6 +171,7 @@ class sbi_run():
         print(tabulate(table_data_free_parameters , headers = ["Variable" , "Value"] , tablefmt = "fancy_grid"))
 
         # Read the observed spectrum
+        print(self.pha_filename)
         obs = ObsConfiguration.from_pha_file(self.pha_filename , low_energy = self.energy_min , high_energy = self.energy_max)
         self.e_min_folded = obs.e_min_folded
         self.e_max_folded = obs.e_max_folded
@@ -311,11 +309,12 @@ class sbi_run():
                                 verbose = False)
         
         # generate sample pairs from testing
-        self.theta_test = prior.sample((self.number_of_simulations_for_test_set ,))
-        self.x_test = compute_x_sim(self.jaxspec_model_expression , self.parameter_states, 
-                                    self.theta_test , self.pha_filename , self.energy_min , self.energy_max ,
-                                    self.free_parameter_prior_types , self.parameter_lower_bounds , apply_stat = True ,
-                                verbose = False)
+        if self.type_of_inference == 'single round inference':
+            self.theta_test = prior.sample((self.number_of_simulations_for_test_set ,))
+            self.x_test = compute_x_sim(self.jaxspec_model_expression , self.parameter_states, 
+                                        self.theta_test , self.pha_filename , self.energy_min , self.energy_max ,
+                                        self.free_parameter_prior_types , self.parameter_lower_bounds , apply_stat = True ,
+                                    verbose = False)
         end_time = time.perf_counter( )
         print(f'It took {end_time - start_time: 0.2f} second(s) to complete the simulations to be used for the inference ')
         self.duration_generation_theta_x = end_time - start_time
@@ -353,20 +352,62 @@ class sbi_run():
 
 
     #===================================================================================================================
-    def run_sri(self):
-
+    def run_inference(self):
 
         # initialise NPE trainer object
         inference = SNPE(prior = self.prior)
-        
-        # add simulations
-        inference.append_simulations(self.theta_train, self.x_train)
 
-        # train the density estimator NN
-        density_estimator = inference.train()
+        # single round inference
+        if self.type_of_inference == 'single round inference':
+            
+            # add simulations
+            inference.append_simulations(self.theta_train, self.x_train)
 
-        # construct DirectPosterior object
-        self.posterior = inference.build_posterior(density_estimator)
+            # train the density estimator NN
+            density_estimator = inference.train()
+
+            # construct DirectPosterior object
+            self.posterior = inference.build_posterior(density_estimator)
+
+        # multi round inference
+        else:
+            
+            # initialise parameters
+            posteriors = []
+            
+            if self.restricted_prior is not None:
+                proposal = self.restricted_prior
+            else:
+                proposal = self.prior
+
+            for r in range(self.number_of_rounds_for_multiple_inference):
+                    
+                # generate sample pairs for training
+                theta = proposal.sample((self.number_of_simulations_for_train_set,))
+                print(f"Generating the simulations that will be used for the inference")
+                start_time = time.perf_counter( )
+                x = compute_x_sim(self.jaxspec_model_expression , self.parameter_states , theta ,
+                                        self.pha_filename ,
+                                        self.energy_min , self.energy_max ,
+                                        self.free_parameter_prior_types , self.parameter_lower_bounds , apply_stat = True ,
+                                        verbose = False)
+                
+                # NB: In `SNLE` and `SNRE`, you should not pass the `proposal` to `.append_simulations()`
+                density_estimator = inference.append_simulations(theta, x, proposal=proposal).train()
+                
+                # construct posterior
+                self.posterior = inference.build_posterior(density_estimator)
+                posteriors.append(self.posterior)
+                
+                # update proposal to draw from 
+                proposal = self.posterior.set_default_x(self.x_obs_reference)
+                    
+
+
+
+
+    #===================================================================================================================
+    def compute_best_fit_params(self):
 
         # run the observed spectra through the density estimator and sample from the cond'd distribution
         self.posterior_theta = self.posterior.sample((self.number_of_posterior_samples,),
@@ -584,8 +625,8 @@ class sbi_run():
 
         if self.type_of_inference == "single round inference":
             plot_title = f"SRI ({self.number_of_simulations_for_train_set:d} simulations)"
-        # elif self.type_of_inference == "multiple round inference":
-            # plot_title = f"MRI ({self.number_of_simulations_for_train_set:d} x {self.number_of_rounds_for_multiple_inference:d} simulations)"
+        elif self.type_of_inference == "multiple round inference":
+            plot_title = f"MRI ({self.number_of_simulations_for_train_set:d} x {self.number_of_rounds_for_multiple_inference:d} simulations)"
 
         c = ChainConsumer()
         c.set_plot_config(PlotConfig(usetex=True, serif=True, label_font_size=18, tick_font_size=14))
@@ -640,8 +681,8 @@ class sbi_run():
 
         if self.type_of_inference == "single round inference":
             plot_title = f"SRI ({self.number_of_simulations_for_train_set:d} simulations)"
-        # elif self.type_of_inference == "multiple round inference":
-            # plot_title = f"MRI ({self.number_of_simulations_for_train_set:d} x {self.number_of_rounds_for_multiple_inference:d} simulations)"
+        elif self.type_of_inference == "multiple round inference":
+            plot_title = f"MRI ({self.number_of_simulations_for_train_set:d} x {self.number_of_rounds_for_multiple_inference:d} simulations)"
 
         # compute Gehrels approximation (low counts) for uncertainty
         gehrels_error_counts = (1. + (0.75 + np.array(self.x_obs_reference)) ** 0.5)

@@ -5,12 +5,13 @@ def main():
     
     # initial params
     yml_dir = "YML_INPUT_FILES/"
-    yml_file = yml_dir+"1_sri_config_cmin_cmax_restrictor_spectrum_20000.yml"
+    # yml_file = yml_dir+"1_sri_config_cmin_cmax_restrictor_spectrum_20000.yml"
+    yml_file = yml_dir+"1_mri_config_cmin_cmax_restrictor_spectrum_2000.yml"
 
     # sections to run
     run_from_pickle = False
     make_plots = True
-    run_calibration = True
+    run_calibration = False
     
 
 
@@ -31,7 +32,8 @@ def main():
         sbi_demo.generate_train_and_test_data()
 
         # run single round inference
-        sbi_demo.run_sri()
+        sbi_demo.run_inference()
+        sbi_demo.compute_best_fit_params()
 
         # save results 
         sbi_demo.save_run_in_pickle_file()
